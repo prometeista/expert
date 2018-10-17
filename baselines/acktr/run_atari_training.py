@@ -19,7 +19,7 @@ def train(params):
         'exclude_zero_actions': False,      # Should exclude zero actions
         'remap_actions': False,             # Should remap to smaller action set?
         'clip_rewards': True,               # Clip rewards to [-1, 1]
-        'monte-specific-blackout': True,    # Cover up score and lives indicators
+        'monte-specific-blackout': False,   # Cover up score and lives indicators
         'pong-specific-blackout': False,    # Cover up scores in pong
         'gamma': params.gamma,              # reward discount factor
         'frame_history': 4,                 # What is minimum number of expert frames since beginning of episode?
