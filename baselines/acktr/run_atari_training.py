@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import numpy as np
+import os
+
+from neptune import ChannelType
 
 from baselines import logger
 from baselines.acktr.acktr_disc import learn
@@ -8,10 +11,13 @@ from baselines.acktr.policies import CnnPolicy
 from baselines.common.cmd_util import make_atari_env, atari_arg_parser
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 
+from exp_utils.neptune_utils import get_configuration
+
 import constants as cnst
 
 
-def train(params):
+def train(ctx):
+    params = ctx.params
     policy_fn = CnnPolicy
 
     dataflow_config = {
@@ -61,6 +67,7 @@ def train(params):
         policy=policy_fn,
         env=env,
         seed=the_seed,
+        ctx=ctx,
         params=params,
         dataflow_config=dataflow_config,
         expert_nbatch=params.expert_nbatch,
@@ -80,9 +87,15 @@ def train(params):
 
 def main():
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    params = atari_arg_parser().parse_args()
+    os.environ['MRUNNER_UNDER_NEPTUNE'] = '1'
+
+    ctx, exp_dir_path = get_configuration()
     logger.configure(dir=cnst.openai_logdir())
-    train(params)
+
+    debug_info = ctx.create_channel('debug info', channel_type=ChannelType.TEXT)
+    debug_info.send('experiment path {}'.format(exp_dir_path))
+
+    train(ctx)
 
 
 if __name__ == '__main__':

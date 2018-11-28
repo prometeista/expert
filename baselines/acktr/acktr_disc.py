@@ -3,6 +3,8 @@ import numpy as np
 import tensorflow as tf
 import time
 
+from neptune import ChannelType
+
 from baselines import logger
 from baselines.acktr import kfac
 from baselines.acktr.utils import Scheduler, find_trainable_variables
@@ -242,7 +244,7 @@ class Model(object):
         tf.local_variables_initializer().run(session=sess)
 
 
-def learn(policy, env, seed, params,
+def learn(policy, env, seed, ctx, params,
           dataflow_config,
           expert_nbatch,
           exp_adv_est='reward',
@@ -291,6 +293,15 @@ def learn(policy, env, seed, params,
     t_last_update = tstart
     t_last_vid = 0
 
+    mframes_channel = ctx.create_channel('mframes', channel_type=ChannelType.NUMERIC)
+    fps_channel = ctx.create_channel('fps', channel_type=ChannelType.NUMERIC)
+    expert_train_accuracy_channel = ctx.create_channel('expert_train_accuracy', channel_type=ChannelType.NUMERIC)
+    policy_loss_channel = ctx.create_channel('policy_loss', channel_type=ChannelType.NUMERIC)
+    policy_expert_loss_channel = ctx.create_channel('policy_expert_loss', channel_type=ChannelType.NUMERIC)
+    policy_entropy_channel = ctx.create_channel('policy_entropy', channel_type=ChannelType.NUMERIC)
+    value_loss_channel = ctx.create_channel('value_loss', channel_type=ChannelType.NUMERIC)
+    explained_variance_channel = ctx.create_channel('explained_variance', channel_type=ChannelType.NUMERIC)
+
     update = 0
 
 
@@ -332,6 +343,15 @@ def learn(policy, env, seed, params,
             logger.record_tabular("explained_variance", float(ev))
 
             logger.dump_tabular()
+
+            mframes_channel.send(x=nframes, y=mframes)
+            fps_channel.send(x=nframes, y=fps)
+            expert_train_accuracy_channel.send(x=nframes, y=float(train_accuracy))
+            policy_loss_channel.send(x=nframes, y=float(policy_loss))
+            policy_expert_loss_channel.send(x=nframes, y=float(policy_expert_loss))
+            policy_entropy_channel.send(x=nframes, y=float(policy_entropy))
+            value_loss_channel.send(x=nframes, y=float(value_loss))
+            explained_variance_channel.send(x=nframes, y=float(ev))
 
         if now - t_last_vid > video_interval:
             easy_video(model, params, 'prob')
