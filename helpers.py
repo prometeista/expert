@@ -17,7 +17,12 @@ def resolve_video_dir(neptune_storage_url, eval_type):
     else:
         root_dir = cnst.ROOT_DIR
 
-    dir_stub = 'vid' if eval_type == 'prob' else 'vid-argmax'
+    if eval_type == 'prob':
+        dir_stub = 'vid'
+    elif eval_type == 'exp':
+        dir_stub = 'vid-exp'
+    else:
+        dir_stub = 'vid-argmax'
 
     return os.path.join(root_dir, dir_stub, datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f"))
 

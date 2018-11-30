@@ -285,3 +285,21 @@ def write_video(env, model, eval_type, vid_writes_to_go=5):
     print("Finished writing video. Total rewards = {}".format(total_rewards))
     return total_rewards
 
+
+def write_video_from_trajectory(env_id, trajectory):
+    tstart = time.time()
+    print("Starting writing video from trajectory...")
+
+    vid_dir = helpers.resolve_video_dir(None, 'exp')
+    env = make_eval_env(env_id=env_id, dumpdir=vid_dir)
+
+    env.reset()
+    total_rew = 0
+
+    for (obs, act, rew) in trajectory:
+        env.step(act)
+        total_rew += rew
+
+    duration = time.time() - tstart
+    print("Finished writing video from trajectory in {} to {}. Total reward = {}".format(
+        duration, vid_dir, total_rew))
