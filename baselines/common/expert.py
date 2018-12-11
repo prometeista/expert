@@ -1,11 +1,7 @@
-from datalib.dataflow import get_dataflows
-
-
 class ExpertRunner(object):
-    def __init__(self, env, model, config):
+    def __init__(self, env, model):
         self.env = env
         self.model = model
-        self.dataflow_iter = get_dataflows(config).get_data()
 
     def run(self):
         """
@@ -14,6 +10,6 @@ class ExpertRunner(object):
         - values according to the freshest value function estimate
         - expert actions
         """
-        obs, actions, future_discounted_rewards = next(self.dataflow_iter)
+        obs, actions, returns, _, idxes = self.model.sil.sample_batch(self.model.sil.batch_size)
         values = self.model.expert_train_model.value(obs)
-        return obs, actions, future_discounted_rewards, values
+        return obs, actions, returns, values, idxes
