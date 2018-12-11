@@ -9,6 +9,19 @@ import datalib.trajectories as trajectories
 
 cv2.ocl.setUseOpenCL(False)
 
+class StickyActionEnv(gym.Wrapper):
+    def __init__(self, env, p=0.25):
+        gym.Wrapper.__init__(self, env)
+        self.p = p
+        self.last_action = 0
+
+    def step(self, action):
+        if np.random.uniform() < self.p:
+            action = self.last_action
+        self.last_action = action
+        obs, reward, done, info = self.env.step(action)
+        return obs, reward, done, info
+
 class NoopResetEnv(gym.Wrapper):
     def __init__(self, env, noop_max=30):
         """Sample initial states by taking random number of no-ops on reset.
@@ -422,6 +435,7 @@ def make_atari(env_id):
     assert 'NoFrameskip' in env.spec.id
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
+    env = StickyActionEnv(env, p=0.25)
     return env
 
 
