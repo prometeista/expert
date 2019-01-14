@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 from baselines.common.distributions import make_pdtype
-from baselines.acktr.utils import conv, fc, conv_to_fc
+from baselines.acktr.utils import conv, fc, conv_to_fc, cat_entropy
 
 
 def nature_cnn(unscaled_images):
@@ -37,6 +37,8 @@ class CnnPolicy(object):
         neglogp0 = self.pd.neglogp(a0)
         self.initial_state = None
 
+        self.entropy = cat_entropy(pi)
+
         def step(ob, *_args, **_kwargs):
             a, v, neglogp = sess.run([a0, vf, neglogp0], {X:ob})
             return a, v, self.initial_state, neglogp
@@ -44,8 +46,13 @@ class CnnPolicy(object):
         def value(ob, *_args, **_kwargs):
             return sess.run(vf, {X:ob})
 
+        def neg_log_prob(actions):
+            return tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits=self.pi, labels=actions)
+
         self.X = X
         self.pi = pi
         self.vf = vf
         self.step = step
         self.value = value
+        self.neg_log_prob = neg_log_prob

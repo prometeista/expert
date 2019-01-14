@@ -11,7 +11,8 @@ from baselines.acktr.utils import Scheduler, find_trainable_variables
 from baselines.acktr.utils import cat_entropy, mse
 from baselines.acktr.utils import discount_with_dones
 from baselines.common import set_global_seeds, explained_variance
-from baselines.common.expert import ExpertRunner
+from baselines.common.self_imitation import SelfImitation
+from baselines.acktr.utils import EpisodeStats
 from baselines.video.video_runners import easy_video
 
 
@@ -32,7 +33,7 @@ class Runner(object):
         self.dones = [False for _ in range(nenv)]
 
     def run(self):
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_raw_rewards = [],[],[],[],[],[]
         mb_states = self.states
         for n in range(self.nsteps):
             actions, values, states, _ = self.model.step(self.obs, self.states, self.dones)
@@ -40,19 +41,24 @@ class Runner(object):
             mb_actions.append(actions)
             mb_values.append(values)
             mb_dones.append(self.dones)
-            obs, rewards, dones, _ = self.env.step(actions)
+            obs, raw_rewards, dones, _ = self.env.step(actions)
+            rewards = np.sign(raw_rewards)
             self.states = states
             self.dones = dones
+            if hasattr(self.model, 'sil'):
+                self.model.sil.step(self.obs, actions, raw_rewards, dones)
             for n, done in enumerate(dones):
                 if done:
                     self.obs[n] = self.obs[n]*0
 
             self.obs = obs
             mb_rewards.append(rewards)
+            mb_raw_rewards.append(raw_rewards)
         mb_dones.append(self.dones)
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0)
+        mb_raw_rewards = np.asarray(mb_raw_rewards, dtype=np.float32).swapaxes(1, 0)
         mb_actions = np.asarray(mb_actions, dtype=np.int32).swapaxes(1, 0)
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
@@ -69,23 +75,24 @@ class Runner(object):
                 rewards = discount_with_dones(rewards, dones, self.gamma)
             mb_rewards[n] = rewards
         mb_rewards = mb_rewards.flatten()
+        mb_raw_rewards = mb_raw_rewards.flatten()
         mb_actions = mb_actions.flatten()
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
+        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_raw_rewards
 
 
 class Model(object):
+
     def __init__(self, policy, ob_space, ac_space, nenvs,
                  expert_nbatch,
                  total_timesteps,
                  nprocs=32, nsteps=20,
                  ent_coef=0.01,
-                 vf_coef=0.5, vf_fisher_coef=1.0, vf_expert_coef=0.5 * 0.0,
-                 expert_coeff=1.0,
-                 exp_adv_est='reward',
+                 vf_coef=0.5, vf_fisher_coef=1.0,
                  lr=0.25, max_grad_norm=0.5,
-                 kfac_clip=0.001, lrschedule='linear'):
+                 kfac_clip=0.001, lrschedule='linear',
+                 sil_update=4, sil_beta=0.0):
 
         # create tf stuff
         config = tf.ConfigProto(allow_soft_placement=True,
@@ -98,39 +105,30 @@ class Model(object):
         nact = ac_space.n
         nbatch = nenvs * nsteps
         A = tf.placeholder(tf.int32, [nbatch])
-        A_EXP = tf.placeholder(tf.int32, [expert_nbatch])
         ADV = tf.placeholder(tf.float32, [nbatch])
-        ADV_EXP = tf.placeholder(tf.float32, [expert_nbatch])
-
         R = tf.placeholder(tf.float32, [nbatch])
-        R_EXP = tf.placeholder(tf.float32, [expert_nbatch])
-
-        PG_LR = tf.placeholder(tf.float32, [])
+        LR = tf.placeholder(tf.float32, [])
 
         step_model = policy(sess, ob_space, ac_space, nenvs, 1, reuse=False)
         eval_step_model = policy(sess, ob_space, ac_space, 1, 1, reuse=True)
         train_model = policy(sess, ob_space, ac_space, nenvs*nsteps, nsteps, reuse=True)
-        expert_train_model = policy(sess, ob_space, ac_space, expert_nbatch, 1, reuse=True)
-        logpac_expert = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=expert_train_model.pi, labels=A_EXP)
-        logpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
+        sil_model = policy(sess, ob_space, ac_space, expert_nbatch, nsteps, reuse=True)
 
-        _, acc = tf.metrics.accuracy(labels=A,
-                                     predictions=tf.argmax(train_model.pi, 1))
+        logpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
+        self.logits = logits = train_model.pi
 
         ## training loss
         pg_loss = tf.reduce_mean(ADV*logpac)
-        pg_expert_loss = tf.reduce_mean(ADV_EXP * logpac_expert)
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         pg_loss = pg_loss - ent_coef * entropy
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
-        vf_expert_loss = tf.reduce_mean(mse(tf.squeeze(expert_train_model.vf), R_EXP))
-        train_loss = pg_loss + vf_coef * vf_loss + expert_coeff * pg_expert_loss + vf_expert_coef * vf_expert_loss
+        train_loss = pg_loss + vf_coef * vf_loss
+        value_avg = tf.reduce_mean(train_model.vf)
 
         self.check = check = tf.add_check_numerics_ops()
 
         ## Fisher loss construction
-        pg_fisher_loss = -tf.reduce_mean(logpac)  # + logpac_expert)
-        # pg_expert_fisher_loss = -tf.reduce_mean(logpac_expert)
+        pg_fisher_loss = -tf.reduce_mean(logpac)
         sample_net = train_model.vf + tf.random_normal(tf.shape(train_model.vf))
         vf_fisher_loss = - vf_fisher_coef * tf.reduce_mean(tf.pow(train_model.vf - tf.stop_gradient(sample_net), 2))
         joint_fisher_loss = pg_fisher_loss + vf_fisher_loss
@@ -141,7 +139,7 @@ class Model(object):
 
         with tf.device('/gpu:0'):
             self.optim = optim = kfac.KfacOptimizer(
-                learning_rate=PG_LR, clip_kl=kfac_clip,
+                learning_rate=LR, clip_kl=kfac_clip,
                 momentum=0.9, kfac_update=1, epsilon=0.01,
                 stats_decay=0.99, async=1, cold_iter=20, max_grad_norm=max_grad_norm
             )
@@ -152,39 +150,25 @@ class Model(object):
         self.q_runner = q_runner
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
-        def train(obs, states, rewards, masks, actions, values,
-                  expert_obs, expert_rewards, expert_actions, expert_values):
-            if exp_adv_est == 'critic':
-                expert_advs = np.clip(expert_rewards - expert_values, a_min=0, a_max=None)
-            elif exp_adv_est == 'reward':
-                expert_advs = expert_rewards
-            elif exp_adv_est == 'simple':
-                expert_advs = np.ones_like(expert_rewards)
-            else:
-                raise ValueError("Unknown expert advantage estimator {}".format(exp_adv_est))
-
+        def train(obs, states, rewards, masks, actions, values):
             advs = rewards - values
             for step in range(len(obs)):
                 cur_lr = lr.value()
 
             td_map = {
                 train_model.X:obs,
-                expert_train_model.X: expert_obs,
-                A_EXP: expert_actions,
                 A:actions,
                 ADV:advs,
-                ADV_EXP: expert_advs,
                 R:rewards,
-                PG_LR:cur_lr,
-                R_EXP: expert_rewards
+                LR:cur_lr
             }
 
             if states is not None:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
 
-            policy_loss, policy_expert_loss, value_loss, policy_entropy, train_accuracy, _, grads_to_check = sess.run(
-                [pg_loss, pg_expert_loss, vf_loss, entropy, acc, train_op, grads],
+            policy_loss, value_loss, policy_entropy, v_avg, _, grads_to_check = sess.run(
+                [pg_loss, vf_loss, entropy, value_avg, train_op, grads],
                 td_map
             )
 
@@ -192,7 +176,16 @@ class Model(object):
                 if np.isnan(grad).any():
                     print("ojojoj grad is nan")
 
-            return policy_loss, policy_expert_loss, value_loss, policy_entropy, train_accuracy
+            return policy_loss, value_loss, policy_entropy, v_avg
+
+        self.sil = SelfImitation(sil_model.X, sil_model.vf,
+                sil_model.entropy, sil_model.value, sil_model.neg_log_prob,
+                ac_space, np.sign, n_env=nenvs, batch_size=expert_nbatch, n_update=sil_update, beta=sil_beta)
+        self.sil.build_train_op(params, optim, LR, max_grad_norm=max_grad_norm)
+
+        def sil_train():
+            cur_lr = lr.value()
+            return self.sil.train(sess, cur_lr)
 
         def save(save_path):
             print("Writing model to {}".format(save_path))
@@ -226,7 +219,6 @@ class Model(object):
 
         self.model = step_model
         self.model2 = train_model
-        self.expert_train_model = expert_train_model
         self.vf_fisher = vf_fisher_loss
         self.pg_fisher = pg_fisher_loss
         self.joint_fisher = joint_fisher_loss
@@ -235,6 +227,7 @@ class Model(object):
         self.save = save
         self.load = load
         self.train_model = train_model
+        self.sil_train = sil_train
         self.step_model = step_model
         self.eval_step = eval_step
         self.step = step_model.step
@@ -245,7 +238,6 @@ class Model(object):
 
 
 def learn(policy, env, seed, ctx, params,
-          dataflow_config,
           expert_nbatch,
           exp_adv_est='reward',
           load_model=None,
@@ -253,10 +245,9 @@ def learn(policy, env, seed, ctx, params,
           gamma=0.99,
           nprocs=32, nsteps=20,
           ent_coef=0.01,
-          vf_coef=0.5, vf_fisher_coef=1.0, vf_expert_coef=0.5 * 0.0,
-          expert_coeff=1.0,
+          vf_coef=0.5, vf_fisher_coef=1.0,
           lr=0.25, max_grad_norm=0.5,
-          kfac_clip=0.001, lrschedule='linear', video_interval=3600):
+          kfac_clip=0.001, lrschedule='linear', sil_update=4, sil_beta=0.0, video_interval=3600):
 
     tf.reset_default_graph()
     set_global_seeds(seed)
@@ -270,11 +261,10 @@ def learn(policy, env, seed, ctx, params,
         expert_nbatch,
         total_timesteps,
         nprocs=nprocs, nsteps=nsteps, ent_coef=ent_coef,
-        vf_coef=vf_coef, vf_expert_coef=vf_expert_coef, vf_fisher_coef=vf_fisher_coef,
+        vf_coef=vf_coef, vf_fisher_coef=vf_fisher_coef,
         lr=lr, max_grad_norm=max_grad_norm,
         kfac_clip=kfac_clip, lrschedule=lrschedule,
-        expert_coeff=expert_coeff,
-        exp_adv_est=exp_adv_est,
+        sil_update=sil_update, sil_beta=sil_beta,
     )
 
     if load_model is not None and load_model != 'None':
@@ -282,8 +272,8 @@ def learn(policy, env, seed, ctx, params,
         model.load(load_model)
 
     runner = Runner(env, model, nsteps=nsteps, gamma=gamma)
-    expert_runner = ExpertRunner(env, model, dataflow_config)
 
+    episode_stats = EpisodeStats(nsteps, nenvs)
     nbatch = nenvs*nsteps
     tstart = time.time()
 
@@ -295,36 +285,32 @@ def learn(policy, env, seed, ctx, params,
 
     mframes_channel = ctx.create_channel('mframes', channel_type=ChannelType.NUMERIC)
     fps_channel = ctx.create_channel('fps', channel_type=ChannelType.NUMERIC)
-    expert_train_accuracy_channel = ctx.create_channel('expert_train_accuracy', channel_type=ChannelType.NUMERIC)
-    policy_loss_channel = ctx.create_channel('policy_loss', channel_type=ChannelType.NUMERIC)
-    policy_expert_loss_channel = ctx.create_channel('policy_expert_loss', channel_type=ChannelType.NUMERIC)
     policy_entropy_channel = ctx.create_channel('policy_entropy', channel_type=ChannelType.NUMERIC)
+    policy_loss_channel = ctx.create_channel('policy_loss', channel_type=ChannelType.NUMERIC)
     value_loss_channel = ctx.create_channel('value_loss', channel_type=ChannelType.NUMERIC)
     explained_variance_channel = ctx.create_channel('explained_variance', channel_type=ChannelType.NUMERIC)
+    episode_reward_channel = ctx.create_channel('episode_reward', channel_type=ChannelType.NUMERIC)
+    sil_best_reward_channel = ctx.create_channel('sil_best_reward', channel_type=ChannelType.NUMERIC)
+    sil_num_episodes_channel = ctx.create_channel('sil_num_episodes', channel_type=ChannelType.NUMERIC)
+    sil_valid_samples_channel = ctx.create_channel('sil_valid_samples', channel_type=ChannelType.NUMERIC)
+    sil_steps_channel = ctx.create_channel('sil_steps', channel_type=ChannelType.NUMERIC)
 
     update = 0
 
 
     while True:
         update += 1
-        obs, states, rewards, masks, actions, values = runner.run()
-        exp_obs, exp_actions, exp_rewards, exp_values = expert_runner.run()
-
-        policy_loss, policy_expert_loss, value_loss, policy_entropy, train_accuracy = model.train(
-            obs, states, rewards, masks, actions, values,
-            exp_obs, exp_rewards, exp_actions, exp_values
-        )
+        obs, states, rewards, masks, actions, values, raw_rewards = runner.run()
+        episode_stats.feed(raw_rewards, masks)
+        policy_loss, value_loss, policy_entropy, v_avg = model.train(obs, states, rewards, masks, actions, values)
+        sil_loss, sil_adv, sil_samples, sil_nlogp = model.sil_train()
+        model.old_obs = obs
 
         now = time.time()
 
         if now - t_last_update > 10:
             nseconds = now - tstart
-
-            if np.abs(expert_coeff) < 1e-9:
-                # if we don't use expert data, we don't count it
-                nframes = update * nbatch
-            else:
-                nframes = update * (nbatch + expert_nbatch)
+            nframes = update * nbatch
 
             fps = int(float(nframes)/nseconds)
             mframes = nframes / 1e6
@@ -335,26 +321,34 @@ def learn(policy, env, seed, ctx, params,
             logger.record_tabular("total_timesteps", update*nbatch)
             logger.record_tabular("mframes", mframes)
             logger.record_tabular("fps", fps)
-            logger.record_tabular("expert_train_accuracy", float(train_accuracy))
-            logger.record_tabular("policy_loss", float(policy_loss))
-            logger.record_tabular("policy_expert_loss", float(policy_expert_loss))
             logger.record_tabular("policy_entropy", float(policy_entropy))
+            logger.record_tabular("policy_loss", float(policy_loss))
             logger.record_tabular("value_loss", float(value_loss))
             logger.record_tabular("explained_variance", float(ev))
+            logger.record_tabular("episode_reward", episode_stats.mean_reward())
+            logger.record_tabular("best_episode_reward", float(model.sil.get_best_reward()))
+            if sil_update > 0:
+                logger.record_tabular("sil_num_episodes", float(model.sil.num_episodes()))
+                logger.record_tabular("sil_valid_samples", float(sil_samples))
+                logger.record_tabular("sil_steps", float(model.sil.num_steps()))
 
             logger.dump_tabular()
 
             mframes_channel.send(x=nframes, y=mframes)
             fps_channel.send(x=nframes, y=fps)
-            expert_train_accuracy_channel.send(x=nframes, y=float(train_accuracy))
-            policy_loss_channel.send(x=nframes, y=float(policy_loss))
-            policy_expert_loss_channel.send(x=nframes, y=float(policy_expert_loss))
             policy_entropy_channel.send(x=nframes, y=float(policy_entropy))
+            policy_loss_channel.send(x=nframes, y=float(policy_loss))
             value_loss_channel.send(x=nframes, y=float(value_loss))
             explained_variance_channel.send(x=nframes, y=float(ev))
+            episode_reward_channel.send(x=nframes, y=episode_stats.mean_reward())
+            sil_best_reward_channel.send(x=nframes, y=float(model.sil.get_best_reward()))
+            sil_num_episodes_channel.send(x=nframes, y=float(model.sil.num_episodes()))
+            sil_valid_samples_channel.send(x=nframes, y=float(sil_samples))
+            sil_steps_channel.send(x=nframes, y=float(model.sil.num_steps()))
 
         if now - t_last_vid > video_interval:
             easy_video(model, params, 'prob')
+            easy_video(model, params, 'argmax')
             t_last_vid = time.time()
 
     coord.request_stop()

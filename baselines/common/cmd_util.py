@@ -104,6 +104,8 @@ def atari_arg_parser():
     parser.add_argument('--load_model', help="What .npy saved model weights to load", type=str, default=None)
     parser.add_argument('--random_state_reset', help="should we reset the environment to random expert state?", type=bool, default=False)
     parser.add_argument('--use_n_trajectories', help="How many trajectories should we use?", type=int, default=-1)
+    parser.add_argument('--sil-update', help="Number of updates per iteration", type=int, default=4)
+    parser.add_argument('--sil-beta', help="Beta for weighted IS", type=float, default=0.1)
 
     return parser
 
