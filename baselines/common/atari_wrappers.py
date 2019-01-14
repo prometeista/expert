@@ -435,11 +435,10 @@ def make_atari(env_id):
     assert 'NoFrameskip' in env.spec.id
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
-    env = StickyActionEnv(env, p=0.25)
     return env
 
 
-def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, scale=False, is_monte=False, is_pong=False, save_original_reward=False, only_positive_rewards=False):
+def wrap_deepmind(env, episode_life=True, clip_rewards=True, sticky_action=False, frame_stack=False, scale=False, is_monte=False, is_pong=False, save_original_reward=False, only_positive_rewards=False):
     """Configure environment for DeepMind-style Atari.
     """
     if episode_life:
@@ -456,6 +455,8 @@ def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, 
             env = SavedClipRewardEnv(env)
         else:
             env = ClipRewardEnv(env)
+    if sticky_action:
+        env = StickyActionEnv(env, p=0.25)
     if frame_stack:
         env = FrameStack(env, 4)
     return env

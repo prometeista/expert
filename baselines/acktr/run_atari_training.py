@@ -25,6 +25,11 @@ def train(ctx):
     print("Today's lucky seed is {}".format(the_seed))
     print(80 * "SEED")
 
+    env_args = {
+        'episode_life': params.episode_life,
+        'clip_rewards': params.clip_rewards,
+        'sticky_action': params.sticky_action
+    }
     env = VecFrameStack(
         make_atari_env(
             env_id=params.env,
@@ -35,6 +40,7 @@ def train(ctx):
             death_penalty=params.death_penalty,
             step_penalty=params.step_penalty,
             random_state_reset=params.random_state_reset,
+            wrapper_kwargs=env_args
         ),
         params.frame_stack
     )

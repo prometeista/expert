@@ -330,7 +330,7 @@ def learn(policy, env, seed, ctx, params,
         obs, states, rewards, masks, actions, values = runner.run()
         episode_stats.feed(rewards, masks)
 
-        if model.sil.num_steps() > 0:
+        if model.sil.num_steps() > expert_nbatch:
             exp_obs, exp_actions, exp_rewards, exp_values, idxes = expert_runner.run()
 
             policy_loss, policy_expert_loss, value_loss, policy_entropy, train_accuracy, priorities = model.train(

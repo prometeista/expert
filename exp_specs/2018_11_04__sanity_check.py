@@ -10,11 +10,11 @@ from spec_utils import get_git_head_info, get_combinations
 def create_experiment_for_spec(parameters):
     script = 'baselines/acktr/run_atari_training.py'
     # this will be also displayed in jobs on prometheus
-    name = 'lkryston, sanity check'
+    name = '64g, sanity check, lkryston'
     project_name = "sil-montezuma"
     python_path = '.:exp_utils:some/other/utils/path'
     paths_to_dump = ''  # e.g. 'plgrid tensor2tensor', do we need it?
-    tags = 'lkryston sanity_check'.split(' ')
+    tags = 'lkryston sanity_check 64g'.split(' ')
     parameters['git_head'] = get_git_head_info()
     return Experiment(project=project_name, name=name, script=script,
                       parameters=parameters, python_path=python_path,
@@ -44,8 +44,13 @@ params_grid = dict(
     num_env=[32],
     random_state_reset=[False],
     step_penalty=[0.0],
+    episode_life=[False],
+    clip_rewards=[False],
+    sticky_action=[False],
     use_n_trajectories=[-1],
-    vf_coef=[0.5]
+    vf_coef=[0.5],
+    sil_update=[4],
+    sil_beta=[0.1]
 )
 params_configurations = get_combinations(params_grid)
 
