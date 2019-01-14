@@ -1,0 +1,17 @@
+# Neptune links
+
+ * [2019_01_02__exp_coef_05.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-257/charts)
+ * [2019_01_02__exp_coef_025.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-266/charts)
+ * [2019_01_02__exp_coef_0125.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-259/charts)
+ * [2019_01_02__exp_coef_00625.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-260/charts)
+ * [2019_01_02__exp_coef_003125.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-261/charts)
+ * [2019_01_04__exp_coef_003125__ent_coef_01.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-289/charts)
+ * [2019_01_04__exp_coef_003125__ent_coef_001.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-280/charts)
+ * [2019_01_04__exp_coef_003125__exp_nbatch_512.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-282/charts)
+ * [2019_01_04__exp_coef_003125__gamma_099.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-281/charts)
+ * [2019_01_04__exp_coef_003125__gamma_0999.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-283/charts)
+ * [2019_01_04__exp_coef_003125__lr_025.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-280/charts)
+ * [2019_01_04__exp_coef_003125__lr_00625.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-285/charts)
+ * [2019_01_04__exp_coef_003125__lr_003125.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-291/charts)
+ * [2019_01_04__exp_coef_003125__nsteps_5.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-290/charts)
+ * [2019_01_04__exp_coef_003125__nsteps_10.py](https://app.neptune.ml/prometeista/sil-montezuma/e/SILM-288/charts)
